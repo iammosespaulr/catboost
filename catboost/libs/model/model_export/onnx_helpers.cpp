@@ -89,10 +89,6 @@ void NCB::NOnnx::InitMetadata(
 
 
 static bool IsClassifierModel(const TFullModel& model) {
-    if (model.ModelTrees->GetDimensionsCount() > 1) { // multiclass
-        return true;
-    }
-
     if (const auto* modelInfoParams = MapFindPtr(model.ModelInfo, "params")) {
         NJson::TJsonValue paramsJson = ReadTJsonValue(*modelInfoParams);
 
@@ -468,14 +464,14 @@ static void AddTree(
                 ++leafValue;
             }
         } else {
-            Y_ASSERT(trees.GetDimensionsCount() == 1);
-
-            treesAttributes->target_treeids->add_ints(treeIdx);
-            treesAttributes->target_nodeids->add_ints(nodeIdx);
-
-            treesAttributes->target_ids->add_ints(0);
-            treesAttributes->target_weights->add_floats((float)*leafValue);
-            ++leafValue;
+            for (auto approxIdx : xrange(trees.GetDimensionsCount()))
+                {
+                    treesAttributes->target_treeids->add_ints(treeIdx);
+                    treesAttributes->target_nodeids->add_ints(nodeIdx);
+                    treesAttributes->target_ids->add_ints(approxIdx);
+                    treesAttributes->target_weights->add_floats((float)*leafValue);
+                    ++leafValue;
+                }
         }
     }
 }
@@ -551,12 +547,14 @@ void NCB::NOnnx::ConvertTreeToOnnxGraph(
         treesNode->set_op_type("TreeEnsembleRegressor");
 
         AddAttribute("post_transform", "NONE", treesNode);
-        AddAttribute("n_targets", i64(1), treesNode);
+
+        const i64 nTargets = static_cast<i64>(trees.GetDimensionsCount());
+        AddAttribute("n_targets", nTargets, treesNode);
 
         InitValueInfo(
             "predictions",
             onnx::TensorProto_DataType_FLOAT,
-            /*secondDim*/ Nothing(),
+            nTargets,
             onnxGraph->add_output()
         );
         treesNode->add_output("predictions");
@@ -683,6 +681,8 @@ static void PrepareTrees(
         *approxDimension = static_cast<int>((*trees)[0][anyIdxNodeIdLeaf].Values.size());
     } else {
         treatLeafNode(treesAttributes.target_treeids, treesAttributes.target_nodeids, treesAttributes.target_weights);
+        const auto anyIdxNodeIdLeaf = treesAttributes.target_nodeids->ints(0);
+        *approxDimension = static_cast<int>((*trees)[0][anyIdxNodeIdLeaf].Values.size());
     }
 }
 
